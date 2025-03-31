@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import './visitor.css';
- const API_BASE_URL = "https://your-backend.up.railway.app";
-
 
 function Visitors() {
   const [role, setRole] = useState(localStorage.getItem("role"));
@@ -21,7 +19,7 @@ function Visitors() {
   const fetchVisitors = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.get('${API_BASE_URL}/visitors', {
+      const response = await axios.get("http://localhost:5000/visitors", {
         headers: { Authorization: `Bearer ${token}` },
       });
       setVisitors(response.data);
@@ -108,7 +106,7 @@ function Visitors() {
 
         const token = localStorage.getItem("token");
         try {
-            const response = await axios.post('${API_BASE_URL}/visitors', formData, {
+            const response = await axios.post("http://localhost:5000/visitors", formData, {
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
             });
 
@@ -132,7 +130,7 @@ function Visitors() {
     const token = localStorage.getItem("token");
     try {
       const response = await axios.put(
-        `${API_BASE_URL}/visitors/approve/${visitorId}`,
+        `http://localhost:5000/visitors/approve/${visitorId}`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
