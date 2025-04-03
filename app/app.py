@@ -39,7 +39,7 @@ cache = Cache(app)
 CORS(app, supports_credentials=True)
 jwt = JWTManager(app)
 
-DB_FILE = "visitor.db"
+DB_FILE = "visitors.db"
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "photo")  # Create a folder named 'pdfs' in the project directory
 
 # Ensure the folder exists
@@ -92,7 +92,7 @@ def init_db():
             host_employee_name TEXT NOT NULL,
             host_department TEXT NOT NULL,
             company_name TEXT,
-            check_in_time TEXT,
+            check_in_time TIMESTAMP,
             check_out_time TIMESTAMP,
             photo_path TEXT,
             status TEXT DEFAULT 'pending'
@@ -231,7 +231,7 @@ class Visitor:
         self.host_employee_name = host_employee_name
         self.host_department = host_department
         self.company_name = company_name
-        self.check_in_time = check_in_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.check_in_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
          # Convert to IST
        
 
@@ -249,19 +249,29 @@ class Visitor:
         visitor_id = cursor.lastrowid
         conn.close()
         return visitor_id
-
-
-
-
-
     @classmethod
     def get_all_visitors(cls):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, full_name, contact_info, purpose_of_visit, host_employee_name, check_in_time,status, photo_path FROM visitors")
+        cursor.execute("""
+                       SELECT id, full_name, contact_info, purpose_of_visit, 
+               host_employee_name, check_in_time, check_out_time, 
+               status, photo_path 
+        FROM visitors 
+        ORDER BY check_in_time DESC""")
         result = cursor.fetchall()
         conn.close()
         return result
+   
+
+
+
+
+
+   
+    
+
+
 
 
 
@@ -407,7 +417,7 @@ def get_visitors():
 
     visitors = Visitor.get_all_visitors()
     visitor_list = [
-        {"id": v[0], "full_name": v[1], "contact_info": v[2], "purpose_of_visit": v[3],"host_employee_name": v[4],"check_in_time":v[5], "status": v[6], "photo_path": v[7]}
+        {"id": v[0], "full_name": v[1], "contact_info": v[2], "purpose_of_visit": v[3],"host_employee_name": v[4],"check_in_time":v[5],"check_out_time":v[6], "status": v[7], "photo_path": v[8]}
         
         for v in visitors
     ]
@@ -456,6 +466,38 @@ def approve_visitor(visitor_id):
 
     return jsonify({"message": "✅ Visitor approved, PDF generated, and email sent"}), 200
 
+
+
+from datetime import datetime
+
+@app.route('/visitors/checkout/<int:visitor_id>', methods=['PUT'])
+@jwt_required()
+def checkout_visitor(visitor_id):
+    """
+    Updates the checkout time for a visitor when they check out.
+    """
+    current_user = get_jwt_identity()
+    user = User.get_user_by_username(current_user)
+
+    # Staff and Manager can update checkout time (if necessary)
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    try:
+        # Get the current time to store as checkout time
+        checkout_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Update the checkout time in the database
+        cursor.execute("UPDATE visitors SET check_out_time = ? WHERE id = ?", (checkout_time, visitor_id))
+        conn.commit()
+
+        return jsonify({"message": f"Visitor {visitor_id} checked out successfully at {checkout_time}."}), 200
+    except Exception as e:
+        conn.rollback()
+        app.logger.error(f"❌ Failed to checkout visitor {visitor_id}: {e}")
+        return jsonify({"error": "Failed to checkout visitor"}), 500
+    finally:
+        conn.close()
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
