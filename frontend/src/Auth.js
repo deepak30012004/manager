@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-
+import "./Auth.css";
 function Auth() {
   const [isLogin, setIsLogin] = useState(true); // Toggle between Login and Signup
   const [username, setUsername] = useState("");
@@ -53,43 +53,45 @@ function Auth() {
   };
 
   return (
-    <div>
-      <h2>{isLogin ? "Login" : "Signup"}</h2>
-      <form onSubmit={handleSubmit}>
-        <input
-          type="text"
-          name="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="Username"
-          required
-        />
-        <input
-          type="password"
-          name="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          required
-        />
-        {!isLogin && (
-          <select
-            name="role"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            required
-          >
-            <option value="staff">Staff</option>
-            <option value="manager">Manager</option>
-          </select>
-        )}
-        <button type="submit">{isLogin ? "Login" : "Signup"}</button>
-      </form>
+<div className="auth-container">
+  <h2>{isLogin ? "Login" : "Signup"}</h2>
+  <form onSubmit={handleSubmit}>
+    <input
+      type="text"
+      name="username"
+      value={username}
+      onChange={(e) => setUsername(e.target.value)}
+      placeholder="Username"
+      required
+    />
+    <input
+      type="password"
+      name="password"
+      value={password}
+      onChange={(e) => setPassword(e.target.value)}
+      placeholder="Password"
+      required
+    />
+    {!isLogin && (
+      <select
+        name="role"
+        value={role}
+        onChange={(e) => setRole(e.target.value)}
+        required
+      >
+        <option value="staff">Staff</option>
+        <option value="manager">Manager</option>
+      </select>
+    )}
+    <button type="submit">{isLogin ? "Login" : "Signup"}</button>
+  </form>
 
-      <button onClick={toggleForm}>
-        {isLogin ? "Don't have an account? Signup" : "Already have an account? Login"}
-      </button>
-    </div>
+  <div className="switch-auth">
+    <span onClick={toggleForm}>
+      {isLogin ? "Don't have an account? Signup" : "Already have an account? Login"}
+    </span>
+  </div>
+</div>
   );
 }
 

@@ -6,7 +6,7 @@ import './visitor.css';
 function Visitors() {
   const [role, setRole] = useState(localStorage.getItem("role"));
   const [visitors, setVisitors] = useState([]);
-  const [imageDataUrl, setImageDataUrl] = useState(null); // To store base64 encoded image
+  const [imageDataUrl, setImageDataUrl] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -52,36 +52,6 @@ function Visitors() {
       .catch((error) => console.error("Error accessing webcam: ", error));
   };
 
-  // const handleSubmit = async (e) => {
-  //   e.preventDefault();
-
-  //   if (role === "staff") {
-  //     const formData = {
-  //       full_name: e.target.full_name.value,
-  //       contact_info: e.target.contact_info.value,
-  //       purpose_of_visit: e.target.purpose_of_visit.value,
-  //       host_employee_name: e.target.host_employee_name.value,
-  //       host_department: e.target.host_department.value,
-  //       company_name: e.target.company_name.value,
-  //       check_in_time: new Date().toISOString(),
-  //       photo_base64: imageDataUrl,
-  //     };
-
-  //     const token = localStorage.getItem("token");
-  //     try {
-  //       const response = await axios.post("http://localhost:5000/visitors", formData, {
-  //         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-  //       });
-  //       alert(response.data.message);
-  //       fetchVisitors();  // Refresh visitor list
-  //     } catch (error) {
-  //       console.error("Error adding visitor", error);
-  //     }
-  //   } else {
-  //     alert("Managers cannot add visitors");
-  //   }
-  // };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -99,10 +69,8 @@ function Visitors() {
             host_department: e.target.host_department.value,
             company_name: e.target.company_name.value,
             check_in_time: new Date().toISOString(),
-            photo: imageDataUrl,  // Ensure 'photo' is sent correctly
+            photo: imageDataUrl,
         };
-
-        console.log("Submitting data:", formData);  // Debugging line
 
         const token = localStorage.getItem("token");
         try {
@@ -118,8 +86,7 @@ function Visitors() {
     } else {
         alert("Managers cannot add visitors");
     }
-};
-
+  };
 
   const approveVisitor = async (visitorId) => {
     if (role !== "manager") {
@@ -140,6 +107,27 @@ function Visitors() {
       console.error("Error approving visitor", error);
     }
   };
+
+  const checkoutVisitor = async (visitorId) => {
+    const token = localStorage.getItem("token");
+    try {
+      const response = await axios.put(
+        `http://localhost:5000/visitors/checkout/${visitorId}`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      alert(response.data.message);
+      fetchVisitors(); // Refresh the list of visitors after checkout
+    } catch (error) {
+      console.error("Error checking out visitor", error);
+      alert("Error checking out visitor. Please try again.");
+    }
+  };
+  
 
   return (
     <div className="dashboard-container">
@@ -189,32 +177,46 @@ function Visitors() {
                 <th>Contact Info</th>
                 <th>Purpose</th>
                 <th>Host</th>
-                <th>check_in</th>
+                <th>Check-In</th>
+                <th>Check-Out</th> {/* New Checkout column */}
                 <th>Status</th>
                 {role === "manager" && <th>Action</th>}
               </tr>
             </thead>
             <tbody>
-              {visitors.map((visitor) => (
-                <tr key={visitor.id}>
-                  <td>{visitor.full_name}</td>
-                  <td>{visitor.contact_info}</td>
-                  <td>{visitor.purpose_of_visit}</td>
-                  <td>{visitor.host_employee_name}</td>
-                  <td>{visitor.check_in_time || "N/A"}</td>  {/* Display Check-In Time */}
-                  <td>{visitor.status}</td>
-                  {role === "manager" && (
-                    <td>
-                      {visitor.status === 'pending' && (
-                        <button className="approve-btn" onClick={() => approveVisitor(visitor.id)}>
-                          Approve
-                        </button>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
+  {visitors.map((visitor) => (
+    <tr key={visitor.id}>
+      <td>{visitor.full_name}</td>
+      <td>{visitor.contact_info}</td>
+      <td>{visitor.purpose_of_visit}</td>
+      <td>{visitor.host_employee_name}</td>
+      <td>{visitor.check_in_time || "N/A"}</td>
+      <td>{visitor.check_out_time || "N/A"}</td> {/* Display checkout time */}
+      <td>{visitor.status}</td>
+      {role === "manager" && (
+        <td>
+          {visitor.status === 'pending' && (
+            <button className="approve-btn" onClick={() => approveVisitor(visitor.id)}>
+              Approve
+            </button>
+          )}
+          {visitor.status === 'approved' && !visitor.check_out_time && (
+            <button className="checkout-btn" onClick={() => checkoutVisitor(visitor.id)}>
+              Checkout
+            </button>
+          )}
+        </td>
+      )}
+      {role === "staff" && visitor.status === 'approved' && !visitor.check_out_time && (
+        <td>
+          <button className="checkout-btn" onClick={() => checkoutVisitor(visitor.id)}>
+            Checkout
+          </button>
+        </td>
+      )}
+    </tr>
+  ))}
+</tbody>
           </table>
         </div>
       </div>
