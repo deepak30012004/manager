@@ -121,4 +121,5 @@ wordcloud==1.9.4
 wrapt==1.17.0
 wsproto==1.2.0
 zipp==3.21.0
-gunicorn
+gunicorn==21.2.0
+
