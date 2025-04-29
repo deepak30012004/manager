@@ -7,6 +7,8 @@ from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity
 )
+from flask_socketio import SocketIO, emit
+
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_caching import Cache
 import logging
@@ -23,9 +25,26 @@ from reportlab.lib.pagesizes import letter
 import os
 # SMTP Configuration
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+import atexit
+from datetime import datetime, timedelta
+
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+
+from celery import Celery
 
 # Initialize Flask App
 app = Flask(__name__)
+
+
+# limiter = Limiter(
+#     get_remote_address,
+#     app=app,
+#     default_limits=["100 per hour"]  # Optional global default
+# )
 app.config["JWT_SECRET_KEY"] = "supersecurejwtkey"  # Change this for security
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
 
@@ -37,9 +56,10 @@ app.config['CACHE_DEFAULT_TIMEOUT'] = 300  # Cache timeout (seconds)
 cache = Cache(app)
 
 CORS(app, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins="*")
 jwt = JWTManager(app)
 
-DB_FILE = "visitors.db"
+DB_FILE = "visi.db"
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "photo")  # Create a folder named 'pdfs' in the project directory
 
 # Ensure the folder exists
@@ -67,6 +87,29 @@ if not os.path.exists(PDF_FOLDER):
 #             time.sleep(delay)  # Wait before retrying
 #     raise ConnectionError("Failed to connect to the database after multiple attempts.")
 # Initialize Database and Ensure 'role' Column Exists
+
+
+
+app.config.update(
+    CELERY_BROKER_URL='redis://localhost:6379/0',   # Redis URL (change if Redis is running elsewhere)
+    CELERY_RESULT_BACKEND='redis://localhost:6379/0',
+
+    
+)
+
+
+def make_celery(app):
+    celery = Celery(
+        app.import_name,
+        backend=app.config['CELERY_RESULT_BACKEND'],
+        broker=app.config['CELERY_BROKER_URL']
+    )
+    celery.conf.update(app.config)
+    return celery
+
+celery = make_celery(app)
+
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -95,7 +138,9 @@ def init_db():
             check_in_time TIMESTAMP,
             check_out_time TIMESTAMP,
             photo_path TEXT,
-            status TEXT DEFAULT 'pending'
+            status TEXT DEFAULT 'pending',
+            ward_name TEXT,
+            ward_email TEXT
         )
     ''')
 
@@ -119,7 +164,83 @@ SENDER_EMAIL = "deepaksingh30012004@gmail.com"  # Change this to your email
 SENDER_PASSWORD = "pqmxvsiwfsnbkkia"
 
 
+def delete_old_visitors():
+    try:
+        conn = sqlite3.connect('visi.db')
+        cursor = conn.cursor()
 
+        # Calculate the cutoff datetime (24 hours ago)
+        cutoff_time = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+        # Debug log (optional)
+        print(f"🧹 Deleting visitors before: {cutoff_time}")
+
+        # Delete visitors older than 24 hours
+        cursor.execute("DELETE FROM visitors WHERE check_in_time < ?", (cutoff_time,))
+        conn.commit()
+        conn.close()
+        print("✅ Old visitors deleted.")
+    except Exception as e:
+        print(f"❌ Error during deletion: {str(e)}")
+
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    func=delete_old_visitors,
+    trigger=IntervalTrigger(seconds=30),  # Change as needed
+    id='delete_old_visitors_job',
+    name='Delete Visitors Older Than 1 Day',
+    replace_existing=True
+)
+scheduler.start()
+
+
+atexit.register(lambda: scheduler.shutdown())
+
+
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+
+@celery.task
+def send_em(to_email):
+    from_email = "singhdeepak30012004@gmail.com" # Replace with your email
+    password = "xpbs otrs acrl mgzi"  # Replace with your email password
+    
+    cc_email="deepaksingh30012004@gmail.com"
+
+    subject="verification"
+    # Create the message
+    msg = MIMEMultipart()
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    
+    if cc_email:
+        msg['Cc'] = cc_email  # Add CC if provided
+    
+
+
+    message="insert photo"
+    # Attach the message body
+    msg.attach(MIMEText(message, 'plain'))
+    
+    # Connect to the server and send the email
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)  # Replace with your SMTP server
+        server.starttls()
+        server.login(from_email, password)
+        recipients = [to_email] + [cc_email] if cc_email else [to_email]
+        server.sendmail(from_email, recipients, msg.as_string())
+        server.quit()
+        print(f"Email sent successfully to {to_email} with CC to {cc_email}")
+    except Exception as e:
+        print(f"Error sending email: {e}")
+
+
+@celery.task
 def send_email(recipient_email, visitor_name, visitor_id):
     """
     Sends an approval email with a QR code link to open the visitor card as a PDF.
@@ -224,45 +345,44 @@ class User:
 
 # Visitor class for visitor management
 class Visitor:
-    def __init__(self, full_name, contact_info, purpose_of_visit, host_employee_name, host_department, company_name="", check_in_time=None, photo_path=None):
+    def __init__(self, full_name, contact_info, purpose_of_visit, host_employee_name, host_department, company_name="", check_in_time=None, photo_path=None, ward_name=None, ward_email=None):
         self.full_name = full_name
         self.contact_info = contact_info
         self.purpose_of_visit = purpose_of_visit
         self.host_employee_name = host_employee_name
         self.host_department = host_department
+        # Added ward email
         self.company_name = company_name
-        self.check_in_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-         # Convert to IST
-       
-
+        self.check_in_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Convert to IST
         self.photo_path = photo_path
-        self.photo_path = photo_path
+        self.ward_name = ward_name  # Added ward name
+        self.ward_email = ward_email 
 
     def save_to_db(self):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute(''' 
-        INSERT INTO visitors (full_name, contact_info, purpose_of_visit, host_employee_name, host_department, company_name, check_in_time, photo_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (self.full_name, self.contact_info, self.purpose_of_visit, self.host_employee_name, self.host_department, self.company_name, self.check_in_time, self.photo_path))
+        cursor.execute('''
+        INSERT INTO visitors (full_name, contact_info, purpose_of_visit, host_employee_name, host_department, company_name, check_in_time, photo_path, ward_name, ward_email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (self.full_name, self.contact_info, self.purpose_of_visit, self.host_employee_name, self.host_department, self.company_name, self.check_in_time, self.photo_path, self.ward_name, self.ward_email))
         conn.commit()
         visitor_id = cursor.lastrowid
         conn.close()
         return visitor_id
+
     @classmethod
     def get_all_visitors(cls):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute("""
                        SELECT id, full_name, contact_info, purpose_of_visit, 
-               host_employee_name, check_in_time, check_out_time, 
-               status, photo_path 
-        FROM visitors 
-        ORDER BY check_in_time DESC""")
+                       host_employee_name, check_in_time, check_out_time, 
+                       status, photo_path, ward_name, ward_email 
+                       FROM visitors 
+                       ORDER BY check_in_time DESC""")
         result = cursor.fetchall()
         conn.close()
         return result
-   
 
 
 
@@ -304,13 +424,16 @@ def signup():
         username = data.get("username")
         password = data.get("password")
         role = data.get("role")  # staff or manager
-
+        print("Received data:", data)
         if not username or not password or not role:
             return jsonify({"error": "Username, password, and role are required"}), 400
 
         hashed_password = generate_password_hash(password)
 
-        user = User(username, hashed_password, role)
+        # user = User(username, hashed_password, role)
+        user = User(username=username, password_hash=hashed_password, role=role)
+
+
         user.save_to_db()
         return jsonify({"message": "User registered successfully"}), 201
     except Exception as e:
@@ -318,8 +441,19 @@ def signup():
         return jsonify({"error": "An error occurred during signup"}), 500
 
 
+
+
+
+# @app.errorhandler(429)
+# def ratelimit_handler(e):
+#     return jsonify({
+#         "error": "Rate limit exceeded",
+#         "message": str(e.description)
+#     }), 429
+
 ##LOGIN AUTHENTICATION
 @app.route('/login', methods=['POST'])
+# @limiter.limit("5 per minute")
 def login():
     data = request.json
     username = data.get("username")
@@ -340,6 +474,25 @@ def login():
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "photo")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)  # ✅ Create folder if not exists
 
+
+
+
+
+
+@socketio.on('connect')
+def handle_connect():
+    print("Client connected")
+
+
+
+
+
+
+
+
+
+
+
 @app.route('/visitors', methods=['POST'])
 @jwt_required()
 def add_visitor():
@@ -358,10 +511,15 @@ def add_visitor():
     company_name = data.get("company_name", "")
     check_in_time = data.get("check_in_time") or None
     photo_base64 = data.get("photo", "")
+    
+    # Ward Details
+    ward_name = data.get("ward_name")
+    ward_email = data.get("ward_email")
 
     photo_filename = None
     photo_path = None  # To store the path
 
+    # Handle photo if provided
     if photo_base64:
         try:
             if "," in photo_base64:
@@ -377,7 +535,7 @@ def add_visitor():
 
             with open(photo_path, "wb") as f:
                 f.write(photo_data)  # Save the image
-            
+
             # ✅ Verify if the image was saved
             if os.path.exists(photo_path):
                 app.logger.info(f"✅ Image saved successfully at {photo_path}")
@@ -393,9 +551,19 @@ def add_visitor():
     visitor = Visitor(
         full_name, contact_info, purpose_of_visit, 
         host_employee_name, host_department, company_name, 
-        check_in_time, photo_path  # Save full path
+        check_in_time, photo_path, ward_name, ward_email  # Added ward details
     )
     visitor_id = visitor.save_to_db()
+
+    # Send email notification to the ward (assuming email function exists)
+    if ward_email:
+        send_em.apply_async(args=[ward_email])
+
+    # Emit an event to notify about the new visitor
+    socketio.emit("new_visitor", {
+        "full_name": full_name,
+        "company_name": company_name,
+    })
 
     return jsonify({
         "message": "Visitor added successfully", 
@@ -455,7 +623,9 @@ def approve_visitor(visitor_id):
         pdf_path = generate_pdf(visitor_id, visitor_name, contact_info, purpose_of_visit, host_employee_name, check_in_time, photo_path)
 
         # Send email with the QR link
-        send_email(contact_info, visitor_name, visitor_id)
+        send_email.apply_async(args=[contact_info, visitor_name, visitor_id])
+        # send_email(contact_info, visitor_name, visitor_id)
+
 
     except Exception as e:
         conn.rollback()
@@ -504,4 +674,5 @@ def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    socketio.run(app, debug=True, allow_unsafe_werkzeug=True)
+
